@@ -1,0 +1,41 @@
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from configuration.config import TELEGRAM_BOT_TOKEN
+from database.database import init_db
+from handlers.handlers import *
+def main():
+    init_db()
+
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"denní\s+přehled"), handle_daily_summary))
+
+    app.add_handler(MessageHandler(
+        filters.TEXT & filters.Regex(r"(?i)^\s*počítat\s+kalorie\s*$"),
+        enter_calorie_mode
+    ))
+
+    app.add_handler(MessageHandler(
+        filters.TEXT & filters.Regex(
+            r"(?i)^\s*(?:↩︎[\s\u00A0]*)?Zpět[\s\u00A0]+na[\s\u00A0]+hlavní[\s\u00A0]+menu\s*$"),
+        exit_to_main_menu
+    ))
+
+    # СТАРЫЙ путь с префиксом kcal|kalorie — оставляем
+    app.add_handler(MessageHandler(
+        filters.TEXT & filters.Regex(r"^(kcal|kalorie)\b"),
+        handle_calorie_query
+    ))
+
+    app.add_handler(MessageHandler(
+        filters.TEXT & filters.Regex(r"^(snídaně|oběd|večeře|svačina)\b"), handle_meal
+    ))
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_chat))
+
+    print("🤖 NutriBot is running (long polling)…")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
