@@ -8,6 +8,7 @@ from telegram.ext import ContextTypes
 from configuration.config import OPENAI_API_KEY
 from database.database import get_db_connection
 from nutrition.nutrition import get_food_info, parse_food_pairs_free
+from datetime import datetime, timedelta, date
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -16,7 +17,8 @@ def anonymize_user(user_id: int) -> str:
 
 MAIN_KB = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton("Denní přehled"), KeyboardButton("Počítat kalorie"), KeyboardButton("Přidat do jídelníčku")],
+        [KeyboardButton("Denní přehled"), KeyboardButton("Týdenní přehled")],
+        [KeyboardButton("Počítat kalorie"), KeyboardButton("Přidat do jídelníčku"), KeyboardButton("Smazat poslední položku")],
     ],
     resize_keyboard=True,
     one_time_keyboard=False,
@@ -31,8 +33,17 @@ MEAL_PICK_KB = ReplyKeyboardMarkup(
     one_time_keyboard=False,
 )
 
-EXIT_ONLY_KB = ReplyKeyboardMarkup(
+CALORIES_EXIT_KB = ReplyKeyboardMarkup(
     keyboard=[
+        [KeyboardButton("Zpět na hlavní menu")],
+    ],
+    resize_keyboard=True,
+    one_time_keyboard=False,
+)
+
+MEAL_EXIT_KB = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton("Smazat poslední položku")],
         [KeyboardButton("Zpět na hlavní menu")],
     ],
     resize_keyboard=True,
@@ -71,6 +82,7 @@ async def _save_meal(update: Update, context: ContextTypes.DEFAULT_TYPE, meal_ty
         return
 
     user_id = anonymize_user(update.effective_user.id)
+    header = format_czech_date_header()
 
     lines, total_kcal, inserted_any = [], 0.0, False
     with get_db_connection() as conn:
@@ -87,7 +99,7 @@ async def _save_meal(update: Update, context: ContextTypes.DEFAULT_TYPE, meal_ty
             inserted_any = True
             total_kcal += info["kcal"]
             lines.append(
-                f"• {info['food_name']} {grams} g = {info['kcal']:.1f} kcal "
+                f"• {info['food_name'].capitalize()} {grams} g = {info['kcal']:.1f} kcal "
                 f"({info['protein']:.1f} bíl., {info['fat']:.1f} tuk., {info['carbs']:.1f} sach.)"
             )
         if inserted_any:
@@ -100,9 +112,42 @@ async def _save_meal(update: Update, context: ContextTypes.DEFAULT_TYPE, meal_ty
         )
         return
 
-    lines.insert(0, f"✅ Přidáno do {meal_type}:")
+    lines.insert(0, f"✅ Přidáno do '{meal_type}' - {header}:")
     lines.append(f"\n🔥 Celkem: {total_kcal:.1f} kcal")
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode="Markdown",
+        # reply_markup=MEAL_EXIT_KB,
+    )
+
+async def handle_delete_last_meal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = anonymize_user(update.effective_user.id)
+
+    with get_db_connection() as conn:
+        row = conn.execute("""
+            SELECT id, meal_type, food, grams, kcal
+            FROM meals
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+        """, (user_id,)).fetchone()
+
+        if not row:
+            await update.message.reply_text(
+                "⚠️ Nemám co smazat – žádná položka zatím není uložena.",
+                reply_markup=MEAL_EXIT_KB,
+            )
+            return
+
+        conn.execute("DELETE FROM meals WHERE id = ?", (row["id"],))
+        conn.commit()
+
+    await update.message.reply_text(
+        "🗑️ Poslední položka byla smazána:\n"
+        f"• {row['meal_type'].capitalize()}: {row['food']} {row['grams']} g "
+        f"({row['kcal']:.1f} kcal)",
+        # reply_markup=MEAL_EXIT_KB,
+    )
 
 
 async def enter_calorie_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -112,7 +157,7 @@ async def enter_calorie_mode(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "Pište potraviny a gramy na řádek, např.:\n`rýže 100`  \nnebo  \n`banán 120 rýže 150`.\n"
         "Pro ukončení klepni na „Zpět na hlavní nabídku“.",
         parse_mode="Markdown",
-        reply_markup=EXIT_ONLY_KB,
+        reply_markup=CALORIES_EXIT_KB,
     )
 
 async def enter_add_meal_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -138,11 +183,11 @@ async def set_meal_mode(update: Update, context: ContextTypes.DEFAULT_TYPE, meal
     context.user_data["mode"] = "meal"
     context.user_data["meal_type"] = meal_type
     await update.message.reply_text(
-        f"🍽️ Zapisování do *{meal_type}* je aktivní.\n"
+        f"🍽️ Zapisování do '*{meal_type}*' je aktivní.\n"
         "Napište položky ve formátu: \n✅`potravina gramy`✅, \nnapř. `banán 120 rýže 150`.\n"
         "Pro návrat klepněte na „Zpět na hlavní menu“.",
         parse_mode="Markdown",
-        reply_markup=EXIT_ONLY_KB,
+        reply_markup=MEAL_EXIT_KB,
     )
 
 async def set_mode_breakfast(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -168,7 +213,7 @@ async def handle_calorie_query(update, context):
         )
         return
 
-    lines = ["📏 *Výpočet kalorií (bez uložení):*", ""]
+    lines = ["📏 *Výpočet kalorií:*", ""]
     total = 0.0
     for food, grams in pairs:
         info = get_food_info(food, grams)
@@ -177,13 +222,25 @@ async def handle_calorie_query(update, context):
             continue
         total += info["kcal"]
         lines.append(
-            f"• {info['food_name']} {grams} g = {info['kcal']:.1f} kcal "
+            f"• {info['food_name'].capitalize()} {grams} g = {info['kcal']:.1f} kcal "
             f"({info['protein']:.1f} bíl., {info['fat']:.1f} tuk., {info['carbs']:.1f} sach.)"
         )
 
     lines.append(f"\n🔥 Celkem: {total:.1f} kcal")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
+MONTHS_GEN = [
+    "ledna", "února", "března", "dubna", "května", "června",
+    "července", "srpna", "září", "října", "listopadu", "prosince"
+]
+
+def format_czech_date(d: date) -> str:
+    month_name = MONTHS_GEN[d.month - 1]
+    return f"{d.day}. {month_name}"
+
+def format_czech_date_header() -> str:
+    today = datetime.now().date()
+    return format_czech_date(today)
 
 async def handle_daily_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = anonymize_user(update.effective_user.id)
@@ -196,21 +253,91 @@ async def handle_daily_summary(update: Update, context: ContextTypes.DEFAULT_TYP
         """, (user_id,)).fetchall()
 
     if not rows:
-        await update.message.reply_text("📭 Zatím jsi dnes nic nezadal.")
+        await update.message.reply_text("📭 Zatím jste dnes nic nezadal.")
         return
 
-    reply_lines = ["📊 *Tvůj denní přehled:*"]
+    header = format_czech_date_header()
+
+    reply_lines = [
+        f"📊 *Váš denní přehled* - {header}:"
+    ]
     total = 0.0
     current = None
     for r in rows:
         if r["meal_type"] != current:
             reply_lines.append(f"\n🍽️ {r['meal_type'].capitalize()}:")
             current = r["meal_type"]
-        reply_lines.append(f"   • {r['food']} {r['grams']} g = {r['kcal']:.1f} kcal")
+        reply_lines.append(f"   • {r['food'].capitalize()} {r['grams']} g = {r['kcal']:.1f} kcal")
         total += r["kcal"]
 
     reply_lines.append(f"\n🔥 Celkem: {total:.1f} kcal")
     await update.message.reply_text("\n".join(reply_lines), parse_mode="Markdown")
+
+async def handle_weekly_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = anonymize_user(update.effective_user.id)
+
+    today = datetime.now().date()
+    start_date = today - timedelta(days=6)
+
+    with get_db_connection() as conn:
+        rows = conn.execute("""
+            SELECT date, meal_type, food, grams, kcal
+            FROM meals
+            WHERE user_id = ?
+              AND date BETWEEN ? AND ?
+            ORDER BY date, meal_type
+        """, (user_id, start_date.isoformat(), today.isoformat())).fetchall()
+
+    if not rows:
+        await update.message.reply_text(
+            "📭 Za posledních 7 dní zatím nemáte žádné záznamy.",
+            reply_markup=MAIN_KB,
+        )
+        return
+
+    by_date = {}
+    for r in rows:
+        d_str = r["date"]      # očekává se formát 'YYYY-MM-DD'
+        by_date.setdefault(d_str, []).append(r)
+
+    reply_lines = ["📊 *Týdenní přehled (posledních 7 dní):*"]
+
+    d = start_date
+    while d <= today:
+        d_str = d.isoformat()
+        pretty_date = format_czech_date(d)
+
+        day_rows = by_date.get(d_str, [])
+        day_total = sum(r["kcal"] for r in day_rows) if day_rows else 0
+
+
+        if day_rows:
+            reply_lines.append(f"\n📅 *{pretty_date}* ({day_total:.1f} kcal)")
+        else:
+            reply_lines.append(f"\n📅 *{pretty_date}*")
+            reply_lines.append("   📭 Nic nebylo zaznamenáno.")
+            d += timedelta(days=1)
+            continue
+
+            # выводим jídla
+        current_meal = None
+        for r in day_rows:
+            if r["meal_type"] != current_meal:
+                reply_lines.append(f"🍽️ {r['meal_type'].capitalize()}:")
+                current_meal = r["meal_type"]
+
+            reply_lines.append(
+                f"   • {r['food']} {r['grams']} g = {r['kcal']:.1f} kcal"
+            )
+
+        d += timedelta(days=1)
+
+    await update.message.reply_text(
+        "\n".join(reply_lines),
+        parse_mode="Markdown",
+        reply_markup=MAIN_KB,
+    )
+
 
 async def handle_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = context.user_data.get("mode")
@@ -226,12 +353,12 @@ async def handle_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if mode == "meal":
         meal_type = context.user_data.get("meal_type")
         parts = (update.message.text or "").strip().split()
-        pairs = parse_food_pairs_free(parts, start=0)  # без префикса
+        pairs = parse_food_pairs_free(parts, start=0)
         if not pairs:
             return await update.message.reply_text(
                 "⚠️ Napište prosím ve formátu: `potravina gramy`, \nnapř. `banán 120 rýže 150`.",
                 parse_mode="Markdown",
-                reply_markup=EXIT_ONLY_KB,
+                reply_markup=MEAL_EXIT_KB,
             )
         return await _save_meal(update, context, meal_type, pairs)
 
@@ -244,12 +371,28 @@ async def handle_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # user_msg = update.message.text
+    system_prompt = """
+    Jste výživový poradce. Odpovídejte česky, stručně, profesionálně a přátelsky.
+
+    Vždy oslovujte uživatele zdvořile v jednotném čísle ("Vy").
+
+    Nezdravte se, dokud uživatel nezačne pozdravem.
+
+    Odpovídejte pouze na dotazy týkající se výživy, jídelníčku, zdravého životního stylu, kalorií, živin nebo potravin.
+    Pokud se dotaz netýká těchto témat, odpovězte laskavě, že na takové otázky nemůžete reagovat, protože jste výživový poradce.
+    """
+
     completion = client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=[
-            {"role": "system", "content": "Jsi výživový poradce. Odpovídej česky, stručně a přátelsky. Nezdrav se, dokud uživatel nezačne pozdravem."},
-            {"role": "user", "content": user_msg}
+            {
+                "role": "system",
+                "content": system_prompt
+            },
+            {
+                "role": "user",
+                "content": user_msg
+            }
         ],
         max_completion_tokens=200,
         temperature=1.0

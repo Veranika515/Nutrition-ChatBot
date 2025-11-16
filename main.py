@@ -9,7 +9,13 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
 
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"(?i)^\s*denní\s+přehled"), handle_daily_summary))
+    app.add_handler(MessageHandler(
+        filters.TEXT & filters.Regex(r"(?i)^\s*denní\s+přehled\s*$"), handle_daily_summary)
+    )
+
+    app.add_handler(MessageHandler(
+        filters.Regex(r"(?i)^\s*týdenní\s+přehled\s*$"), handle_weekly_summary)
+    )
 
     app.add_handler(MessageHandler(
         filters.TEXT & filters.Regex(r"(?i)^\s*počítat\s+kalorie\s*$"),
@@ -26,6 +32,9 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"(?i)^\s*večeře\s*$"), set_mode_dinner))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"(?i)^\s*svačina\s*$"), set_mode_snack))
 
+    app.add_handler(MessageHandler(
+        filters.Regex(r"(?i)^\s*smazat\s+poslední\s+položku$\s*$"), handle_delete_last_meal)
+    )
 
     app.add_handler(MessageHandler(
         filters.TEXT & filters.Regex(

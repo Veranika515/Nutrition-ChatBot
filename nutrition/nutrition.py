@@ -8,7 +8,8 @@ from configuration.config import OPENAI_API_KEY, CALORIE_NINJAS_KEY
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-_NUM_RE = re.compile(r"^(\d+(?:[.,]\d+)?)$", re.IGNORECASE)
+# _NUM_RE = re.compile(r"^(\d+(?:[.,]\d+)?)$", re.IGNORECASE)
+_NUM_RE = re.compile(r"^(\d+(?:[.,]\d+)?)(?:\s*(?:g|gram|grams|gramů|gramy)?)$", re.IGNORECASE)
 
 def translate_to_english(food_name: str) -> str:
     completion = client.chat.completions.create(
@@ -32,12 +33,15 @@ def _to_int_grams(tok: str) -> int | None:
     except ValueError:
         return None
 
+GRAM_WORDS = {"g", "gram", "grams", "gramy", "gramů"}
+
 def parse_food_pairs_free(tokens: List[str], start: int = 0) -> List[Tuple[str, int]]:
     pairs: List[Tuple[str, int]] = []
     buf: List[str] = []
     i = start
     while i < len(tokens):
-        grams = _to_int_grams(tokens[i])
+        tok = tokens[i]
+        grams = _to_int_grams(tok)
         if grams is not None:
             if buf:
                 food = " ".join(buf).strip()
@@ -45,7 +49,11 @@ def parse_food_pairs_free(tokens: List[str], start: int = 0) -> List[Tuple[str, 
                     pairs.append((food, grams))
                 buf = []
         else:
-            buf.append(tokens[i])
+            if tok.strip().lower() in GRAM_WORDS:
+                i += 1
+                continue
+
+            buf.append(tok)
         i += 1
     return pairs
 
@@ -66,13 +74,14 @@ def get_food_info(food_name: str, grams: int):
 
         if 200 <= resp.status_code < 300:
             data = resp.json()
-            items = data.get("items") or []  # <-- ВАЖНО: items, не foods
+            items = data.get("items") or []
             if not items:
                 print("⚠️ Not found in CalorieNinjas:", query)
                 return None
             f = items[0]
             return {
-                "food_name": f.get("name", food_name_en),
+                "food_name": food_name,
+                # "food_name_en": f.get("name", food_name_en),
                 "kcal": float(f.get("calories", 0) or 0),
                 "protein": float(f.get("protein_g", 0) or 0),
                 "fat": float(f.get("fat_total_g", 0) or 0),
