@@ -16,8 +16,16 @@ def anonymize_user(user_id: int) -> str:
 
 MAIN_KB = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton("denní přehled")],
-        [KeyboardButton("počítat kalorie")],
+        [KeyboardButton("Denní přehled"), KeyboardButton("Počítat kalorie"), KeyboardButton("Přidat do jídelníčku")],
+    ],
+    resize_keyboard=True,
+    one_time_keyboard=False,
+)
+
+MEAL_PICK_KB = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton("Snídaně"), KeyboardButton("Oběd"), KeyboardButton("Večeře"),  KeyboardButton("Svačina")],
+        [KeyboardButton("Zpět na hlavní menu")],
     ],
     resize_keyboard=True,
     one_time_keyboard=False,
@@ -37,7 +45,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
         conn.commit()
 
-    # сбросить любой режим при /start
     context.user_data["mode"] = None
 
     await update.message.reply_text(
@@ -52,73 +59,37 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=MAIN_KB,
     )
 
-async def enter_calorie_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["mode"] = "calories"
-    await update.message.reply_text(
-        "🔢 *Režim výpočtu kalorií*\n"
-        "Pište potraviny a gramy na řádek, např.:\n`rýže 100`  \nnebo  \n`banán 120 rýže 150`.\n"
-        "Pro ukončení klepni na „Zpět na hlavní nabídku“.",
-        parse_mode="Markdown",
-        reply_markup=EXIT_ONLY_KB,
-    )
-
-async def exit_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["mode"] = None
-    await update.message.reply_text(
-        "🧭 Jste zpět v hlavním menu! \nVyberte, prosím, další akci",
-        reply_markup=MAIN_KB,
-    )
-
-
-async def handle_meal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get("mode") == "calories":
+async def _save_meal(update: Update, context: ContextTypes.DEFAULT_TYPE, meal_type: str, pairs):
+    if not meal_type:
+        await update.message.reply_text("⚠️ Není vybrán typ jídla.")
+        return
+    if not pairs:
         await update.message.reply_text(
-            "🔢 *Režim výpočtu kalorií*\n"
-            "Pište potraviny a gramy na řádek, např.:\n`rýže 100`  \nnebo  \n`banán 120 rýže 150`.\n"
-            "Pro ukončení klepni na „Zpět na hlavní nabídku“.",
-            parse_mode="Markdown",
+            "⚠️ Napište položky ve formátu: \n✅`potravina gramy`✅, \nnapř. `banán 120 rýže 150`.",
+            parse_mode="Markdown"
         )
         return
 
-    text = (update.message.text or "").strip().lower()
-    parts = text.split()
-    if len(parts) < 3:
-        await update.message.reply_text("⚠️ Formát: `snídaně banán 100 rýže 150`", parse_mode="Markdown")
-        return
-
     user_id = anonymize_user(update.effective_user.id)
-    meal_type = parts[0]
 
-    pairs = parse_food_pairs_free(parts, start=1)
-    if not pairs:
-        await update.message.reply_text("⚠️ Nenalezl jsem dvojice `potravina gramy`.", parse_mode="Markdown")
-        return
-
-    lines = []
-    total_kcal = 0.0
-    inserted_any = False
-
+    lines, total_kcal, inserted_any = [], 0.0, False
     with get_db_connection() as conn:
         for food, grams in pairs:
             info = get_food_info(food, grams)
             if not info:
                 lines.append(f"⚠️ Nepodařilo se najít údaje o `{food}`.")
                 continue
-
             conn.execute("""
                 INSERT INTO meals (user_id, meal_type, food, grams, kcal, protein, fat, carbs)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                user_id, meal_type, info["food_name"], grams,
-                info["kcal"], info["protein"], info["fat"], info["carbs"]
-            ))
+            """, (user_id, meal_type, info["food_name"], grams,
+                  info["kcal"], info["protein"], info["fat"], info["carbs"]))
             inserted_any = True
             total_kcal += info["kcal"]
             lines.append(
                 f"• {info['food_name']} {grams} g = {info['kcal']:.1f} kcal "
                 f"({info['protein']:.1f} bíl., {info['fat']:.1f} tuk., {info['carbs']:.1f} sach.)"
             )
-
         if inserted_any:
             conn.commit()
 
@@ -134,13 +105,65 @@ async def handle_meal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
+async def enter_calorie_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["mode"] = "calories"
+    await update.message.reply_text(
+        "🔢 *Režim výpočtu kalorií*\n"
+        "Pište potraviny a gramy na řádek, např.:\n`rýže 100`  \nnebo  \n`banán 120 rýže 150`.\n"
+        "Pro ukončení klepni na „Zpět na hlavní nabídku“.",
+        parse_mode="Markdown",
+        reply_markup=EXIT_ONLY_KB,
+    )
+
+async def enter_add_meal_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["mode"] = "pick_meal"
+    context.user_data.pop("meal_type", None)
+    await update.message.reply_text(
+        "Prosím vyberte, do kterého jídla chcete zapisovat: "
+        "klepněte na *Snídaně / Oběd / Večeře / Svačina*.",
+        parse_mode="Markdown",
+        reply_markup=MEAL_PICK_KB,
+    )
+
+async def exit_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["mode"] = None
+    await update.message.reply_text(
+        "🧭 Jste zpět v hlavním menu! \nVyberte, prosím, další akci",
+        reply_markup=MAIN_KB,
+    )
+
+MEAL_TYPES = {"snídaně", "oběd", "večeře", "svačina"}
+
+async def set_meal_mode(update: Update, context: ContextTypes.DEFAULT_TYPE, meal_type: str):
+    context.user_data["mode"] = "meal"
+    context.user_data["meal_type"] = meal_type
+    await update.message.reply_text(
+        f"🍽️ Zapisování do *{meal_type}* je aktivní.\n"
+        "Napište položky ve formátu: \n✅`potravina gramy`✅, \nnapř. `banán 120 rýže 150`.\n"
+        "Pro návrat klepněte na „Zpět na hlavní menu“.",
+        parse_mode="Markdown",
+        reply_markup=EXIT_ONLY_KB,
+    )
+
+async def set_mode_breakfast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await set_meal_mode(update, context, "snídaně")
+
+async def set_mode_lunch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await set_meal_mode(update, context, "oběd")
+
+async def set_mode_dinner(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await set_meal_mode(update, context, "večeře")
+
+async def set_mode_snack(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await set_meal_mode(update, context, "svačina")
+
 async def handle_calorie_query(update, context):
     parts = (update.message.text or "").strip().split()
     start_idx = 1 if parts and parts[0].lower() in ("kcal", "kalorie") else 0
     pairs = parse_food_pairs_free(parts, start=start_idx)
     if not pairs:
         await update.message.reply_text(
-            "Napište např.: \n`kcal smažený sýr 100 párek 50`  \nnebo  bez prefixu kcal:\n`rýže 100`",
+            "Napište položky ve formátu: \n✅`potravina gramy`✅, \nnapř.: `kcal smažený sýr 100 párek 50`  \nnebo  bez prefixu kcal:\n`rýže 100`",
             parse_mode="Markdown"
         )
         return
@@ -190,10 +213,38 @@ async def handle_daily_summary(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("\n".join(reply_lines), parse_mode="Markdown")
 
 async def handle_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get("mode") == "calories":
+    mode = context.user_data.get("mode")
+    if mode == "calories":
         return await handle_calorie_query(update, context)
 
-    user_msg = update.message.text
+    if mode == "pick_meal":
+        return await update.message.reply_text(
+            "🔽 Vyberte prosím z tlačítek níže, do kterého jídla chcete zapisovat.",
+            reply_markup=MEAL_PICK_KB,
+        )
+
+    if mode == "meal":
+        meal_type = context.user_data.get("meal_type")
+        parts = (update.message.text or "").strip().split()
+        pairs = parse_food_pairs_free(parts, start=0)  # без префикса
+        if not pairs:
+            return await update.message.reply_text(
+                "⚠️ Napište prosím ve formátu: `potravina gramy`, \nnapř. `banán 120 rýže 150`.",
+                parse_mode="Markdown",
+                reply_markup=EXIT_ONLY_KB,
+            )
+        return await _save_meal(update, context, meal_type, pairs)
+
+    user_msg = (update.message.text or "").strip()
+
+    if not user_msg:
+        await update.message.reply_text(
+            "Prosím, vyberte jednu z možností v hlavním menu níže.",
+            reply_markup=MAIN_KB,
+        )
+        return
+
+    # user_msg = update.message.text
     completion = client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=[

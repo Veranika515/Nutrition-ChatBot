@@ -9,7 +9,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
 
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"denní\s+přehled"), handle_daily_summary))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"(?i)^\s*denní\s+přehled"), handle_daily_summary))
 
     app.add_handler(MessageHandler(
         filters.TEXT & filters.Regex(r"(?i)^\s*počítat\s+kalorie\s*$"),
@@ -17,19 +17,25 @@ def main():
     ))
 
     app.add_handler(MessageHandler(
+        filters.TEXT & filters.Regex(r"(?i)^\s*přidat\s+do\s+jídelníčku\s*$"),
+        enter_add_meal_menu
+    ))
+
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"(?i)^\s*snídaně\s*$"), set_mode_breakfast))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"(?i)^\s*oběd\s*$"), set_mode_lunch))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"(?i)^\s*večeře\s*$"), set_mode_dinner))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"(?i)^\s*svačina\s*$"), set_mode_snack))
+
+
+    app.add_handler(MessageHandler(
         filters.TEXT & filters.Regex(
             r"(?i)^\s*(?:↩︎[\s\u00A0]*)?Zpět[\s\u00A0]+na[\s\u00A0]+hlavní[\s\u00A0]+menu\s*$"),
         exit_to_main_menu
     ))
 
-    # СТАРЫЙ путь с префиксом kcal|kalorie — оставляем
     app.add_handler(MessageHandler(
         filters.TEXT & filters.Regex(r"^(kcal|kalorie)\b"),
         handle_calorie_query
-    ))
-
-    app.add_handler(MessageHandler(
-        filters.TEXT & filters.Regex(r"^(snídaně|oběd|večeře|svačina)\b"), handle_meal
     ))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_chat))
