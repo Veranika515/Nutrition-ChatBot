@@ -7,7 +7,7 @@ from telegram.ext import ContextTypes
 
 from configuration.config import OPENAI_API_KEY
 from database.database import get_db_connection
-from nutrition.nutrition import get_food_info, parse_food_pairs_free
+from nutrition.nutrition import get_food_info, parse_food_pairs_free, parse_food_pairs_llm
 from datetime import datetime, timedelta, date
 
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -63,7 +63,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🍽️ Pomohu Vám pečovat o zdravé stravování:\n"
         "• Rychle spočítejte kalorie – klepněte na tlačítko „počítat kalorie“.\n"
         "• Přidejte do dnešního jídelníčku to, co jste snědl(a) – klepněte na „Přidat do jídelníčku“.\n"
-        "• Podívejte se na souhrn dne – tlačítkem „denní přehled“.\n\n"
+        "• Podívejte se na souhrn dne – tlačítkem „Denní přehled“, nebo na souhrn týdne – tlačítkem „Týdenní přehled“.\n\n"
         "💬 A pokud máte otázky týkající se výživy nebo zdravého životního stylu, jednoduše se zeptejte – rád Vám odpovím!",
 
     parse_mode="Markdown",
@@ -117,7 +117,6 @@ async def _save_meal(update: Update, context: ContextTypes.DEFAULT_TYPE, meal_ty
     await update.message.reply_text(
         "\n".join(lines),
         parse_mode="Markdown",
-        # reply_markup=MEAL_EXIT_KB,
     )
 
 async def handle_delete_last_meal(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -146,7 +145,6 @@ async def handle_delete_last_meal(update: Update, context: ContextTypes.DEFAULT_
         "🗑️ Poslední položka byla smazána:\n"
         f"• {row['meal_type'].capitalize()}: {row['food']} {row['grams']} g "
         f"({row['kcal']:.1f} kcal)",
-        # reply_markup=MEAL_EXIT_KB,
     )
 
 
@@ -203,12 +201,23 @@ async def set_mode_snack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await set_meal_mode(update, context, "svačina")
 
 async def handle_calorie_query(update, context):
-    parts = (update.message.text or "").strip().split()
-    start_idx = 1 if parts and parts[0].lower() in ("kcal", "kalorie") else 0
-    pairs = parse_food_pairs_free(parts, start=start_idx)
+    text = (update.message.text or "").strip()
+    pairs = parse_food_pairs_llm(text)
+
+    if not pairs:
+        parts = text.split()
+        start_idx = 1 if parts and parts[0].lower() in ("kcal", "kalorie") else 0
+        pairs = parse_food_pairs_free(parts, start=start_idx)
+
     if not pairs:
         await update.message.reply_text(
-            "Napište položky ve formátu: \n✅`potravina gramy`✅, \nnapř.: `kcal smažený sýr 100 párek 50`  \nnebo  bez prefixu kcal:\n`rýže 100`",
+            "Napište prosím, co chcete spočítat.\n"
+            "Můžete použít přirozenou větu, např.:\n"
+            "  ✅`Kolik kalorií má 60 g ovesné kaše a 250 ml kávy?`✅\n\n"
+            "nebo jednoduchý formát:\n"
+            "  ✅`rýže 100 kuře 150`✅\n"
+            "  případně s prefixem `kcal`, např.:\n"
+            "  ✅`kcal smažený sýr 100 párek 50`✅",
             parse_mode="Markdown"
         )
         return
@@ -319,7 +328,6 @@ async def handle_weekly_summary(update: Update, context: ContextTypes.DEFAULT_TY
             d += timedelta(days=1)
             continue
 
-            # выводим jídla
         current_meal = None
         for r in day_rows:
             if r["meal_type"] != current_meal:
@@ -352,14 +360,23 @@ async def handle_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if mode == "meal":
         meal_type = context.user_data.get("meal_type")
-        parts = (update.message.text or "").strip().split()
-        pairs = parse_food_pairs_free(parts, start=0)
+        text = (update.message.text or "").strip()
+
+        pairs = parse_food_pairs_llm(text)
+
+        if not pairs:
+            parts = text.split()
+            pairs = parse_food_pairs_free(parts, start=0)
+
         if not pairs:
             return await update.message.reply_text(
-                "⚠️ Napište prosím ve formátu: `potravina gramy`, \nnapř. `banán 120 rýže 150`.",
+                "⚠️ Napište prosím, co jste jedl(a). "
+                "Můžete použít přirozenou větu \n(např. ✅`Dnes jsem měla pečené kuře 60 g a kávu 250 ml`✅)\n "
+                "nebo formát `potravina gramy` \n(např. ✅`ovesná kaše 60 káva 250`✅).",
                 parse_mode="Markdown",
                 reply_markup=MEAL_EXIT_KB,
             )
+
         return await _save_meal(update, context, meal_type, pairs)
 
     user_msg = (update.message.text or "").strip()
@@ -372,11 +389,9 @@ async def handle_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     system_prompt = """
-    Jste výživový poradce. Odpovídejte česky, stručně, profesionálně a přátelsky.
+    Jste výživový poradce. Odpovídejte česky, stručně, profesionálně a přátelsky. Nezdravte se, dokud uživatel nezačne pozdravem.
 
     Vždy oslovujte uživatele zdvořile v jednotném čísle ("Vy").
-
-    Nezdravte se, dokud uživatel nezačne pozdravem.
 
     Odpovídejte pouze na dotazy týkající se výživy, jídelníčku, zdravého životního stylu, kalorií, živin nebo potravin.
     Pokud se dotaz netýká těchto témat, odpovězte laskavě, že na takové otázky nemůžete reagovat, protože jste výživový poradce.

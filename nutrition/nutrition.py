@@ -1,4 +1,5 @@
 import time
+import json
 
 import requests
 import re
@@ -8,7 +9,6 @@ from configuration.config import OPENAI_API_KEY, CALORIE_NINJAS_KEY
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# _NUM_RE = re.compile(r"^(\d+(?:[.,]\d+)?)$", re.IGNORECASE)
 _NUM_RE = re.compile(r"^(\d+(?:[.,]\d+)?)(?:\s*(?:g|gram|grams|gramů|gramy)?)$", re.IGNORECASE)
 
 def translate_to_english(food_name: str) -> str:
@@ -81,7 +81,6 @@ def get_food_info(food_name: str, grams: int):
             f = items[0]
             return {
                 "food_name": food_name,
-                # "food_name_en": f.get("name", food_name_en),
                 "kcal": float(f.get("calories", 0) or 0),
                 "protein": float(f.get("protein_g", 0) or 0),
                 "fat": float(f.get("fat_total_g", 0) or 0),
@@ -100,3 +99,43 @@ def get_food_info(food_name: str, grams: int):
         print(f"❌ CalorieNinjas API error {resp.status_code}: {resp.text[:200]}")
         return None
     return None
+
+def parse_food_pairs_llm(text: str) -> List[Tuple[str, int]]:
+    system_prompt = (
+        "Jsi asistent pro výživu. "
+        "Tvým úkolem je z české věty vytáhnout všechny potraviny a množství v gramech.\n"
+        "Výstup vracej POUZE jako platné JSON pole objektů ve tvaru:\n"
+        '[{\"food\": \"ovesná kaše\", \"grams\": 60}, {\"food\": \"káva\", \"grams\": 250}]\n'
+        "Nepřidávej žádný text okolo, žádné vysvětlení, žádné komentáře."
+    )
+
+    completion = client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": text}
+        ],
+        max_completion_tokens=150,
+        temperature=0.1,
+    )
+
+    raw = completion.choices[0].message.content.strip()
+
+    try:
+        data = json.loads(raw)
+        pairs: List[Tuple[str, int]] = []
+        if isinstance(data, list):
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                food = str(item.get("food", "")).strip()
+                grams = item.get("grams")
+                try:
+                    grams_int = int(round(float(grams)))
+                except Exception:
+                    continue
+                if food and grams_int > 0:
+                    pairs.append((food, grams_int))
+        return pairs
+    except json.JSONDecodeError:
+        return []

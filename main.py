@@ -10,35 +10,34 @@ def main():
     app.add_handler(CommandHandler("start", start))
 
     app.add_handler(MessageHandler(
-        filters.TEXT & filters.Regex(r"(?i)^\s*denní\s+přehled\s*$"), handle_daily_summary)
+        filters.Text(["Denní přehled"]), handle_daily_summary)
     )
 
     app.add_handler(MessageHandler(
-        filters.Regex(r"(?i)^\s*týdenní\s+přehled\s*$"), handle_weekly_summary)
+        filters.Text(["Týdenní přehled"]), handle_weekly_summary)
     )
 
     app.add_handler(MessageHandler(
-        filters.TEXT & filters.Regex(r"(?i)^\s*počítat\s+kalorie\s*$"),
+        filters.Text(["Počítat kalorie"]),
         enter_calorie_mode
     ))
 
     app.add_handler(MessageHandler(
-        filters.TEXT & filters.Regex(r"(?i)^\s*přidat\s+do\s+jídelníčku\s*$"),
+        filters.Text(["Přidat do jídelníčku"]),
         enter_add_meal_menu
     ))
 
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"(?i)^\s*snídaně\s*$"), set_mode_breakfast))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"(?i)^\s*oběd\s*$"), set_mode_lunch))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"(?i)^\s*večeře\s*$"), set_mode_dinner))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"(?i)^\s*svačina\s*$"), set_mode_snack))
+    app.add_handler(MessageHandler(filters.Text(["Snídaně"]), set_mode_breakfast))
+    app.add_handler(MessageHandler(filters.Text(["Oběd"]), set_mode_lunch))
+    app.add_handler(MessageHandler(filters.Text(["Večeře"]), set_mode_dinner))
+    app.add_handler(MessageHandler(filters.Text(["Svačina"]), set_mode_snack))
 
     app.add_handler(MessageHandler(
-        filters.Regex(r"(?i)^\s*smazat\s+poslední\s+položku$\s*$"), handle_delete_last_meal)
+        filters.Text(["Smazat poslední položku"]), handle_delete_last_meal)
     )
 
     app.add_handler(MessageHandler(
-        filters.TEXT & filters.Regex(
-            r"(?i)^\s*(?:↩︎[\s\u00A0]*)?Zpět[\s\u00A0]+na[\s\u00A0]+hlavní[\s\u00A0]+menu\s*$"),
+        filters.Text(["Zpět na hlavní menu"]),
         exit_to_main_menu
     ))
 
