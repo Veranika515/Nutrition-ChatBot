@@ -18,6 +18,10 @@ def main():
     )
 
     app.add_handler(MessageHandler(
+        filters.Text(["Nastavit profil"]),enter_profile_setup)
+    )
+
+    app.add_handler(MessageHandler(
         filters.Text(["Počítat kalorie"]),
         enter_calorie_mode
     ))

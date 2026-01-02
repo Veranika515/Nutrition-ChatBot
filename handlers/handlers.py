@@ -6,8 +6,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from configuration.config import OPENAI_API_KEY
-from database.database import get_db_connection
-from nutrition.nutrition import get_food_info, parse_food_pairs_free, parse_food_pairs_llm
+from database.database import get_db_connection, upsert_profile
+from nutrition.nutrition import get_food_info, parse_food_pairs_free, parse_food_pairs_llm, calculate_targets
 from datetime import datetime, timedelta, date
 
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -17,6 +17,7 @@ def anonymize_user(user_id: int) -> str:
 
 MAIN_KB = ReplyKeyboardMarkup(
     keyboard=[
+        [KeyboardButton("Nastavit profil")],
         [KeyboardButton("Denní přehled"), KeyboardButton("Týdenní přehled")],
         [KeyboardButton("Počítat kalorie"), KeyboardButton("Přidat do jídelníčku"), KeyboardButton("Smazat poslední položku")],
     ],
@@ -50,6 +51,40 @@ MEAL_EXIT_KB = ReplyKeyboardMarkup(
     one_time_keyboard=False,
 )
 
+SEX_KB = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton("Muž"), KeyboardButton("Žena")],
+        [KeyboardButton("Zrušit")],
+    ],
+    resize_keyboard=True,
+    one_time_keyboard=False,
+)
+
+ACTIVITY_KB = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton("Sedavá"), KeyboardButton("Lehká")],
+        [KeyboardButton("Střední"), KeyboardButton("Vysoká")],
+        [KeyboardButton("Zrušit")],
+    ],
+    resize_keyboard=True,
+    one_time_keyboard=False,
+)
+
+GOAL_KB = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton("Hubnout"), KeyboardButton("Udržovat"), KeyboardButton("Nabírat")],
+        [KeyboardButton("Zrušit")],
+    ],
+    resize_keyboard=True,
+    one_time_keyboard=False,
+)
+
+CANCEL_KB = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton("Zrušit")]],
+    resize_keyboard=True,
+    one_time_keyboard=False,
+)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = anonymize_user(update.effective_user.id)
     with get_db_connection() as conn:
@@ -61,9 +96,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Dobrý den! Jsem *NutriBot*, Váš výživový poradce.\n\n"
         "🍽️ Pomohu Vám pečovat o zdravé stravování:\n"
-        "• Rychle spočítejte kalorie – klepněte na tlačítko „počítat kalorie“.\n"
+        "• Rychle spočítejte kalorie – klepněte na tlačítko „Počítat kalorie“.\n"
         "• Přidejte do dnešního jídelníčku to, co jste snědl(a) – klepněte na „Přidat do jídelníčku“.\n"
         "• Podívejte se na souhrn dne – tlačítkem „Denní přehled“, nebo na souhrn týdne – tlačítkem „Týdenní přehled“.\n\n"
+        "• Nastavte si osobní cíle (kalorie a makroživiny) pomocí vědeckých výpočtů – tlačítkem „Nastavit profil“.\n\n"
         "💬 A pokud máte otázky týkající se výživy nebo zdravého životního stylu, jednoduše se zeptejte – rád Vám odpovím!",
 
     parse_mode="Markdown",
@@ -345,9 +381,156 @@ async def handle_weekly_summary(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=MAIN_KB,
     )
 
+async def enter_profile_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # GDPR/Disclaimer + старт анкеты
+    context.user_data["mode"] = "set_profile_1"
+    context.user_data["profile"] = {}
+
+    await update.message.reply_text(
+        "⚠️ *Upozornění / Disclaimer*\n\n"
+        "Doporučení nejsou lékařská rada. Výsledky jsou pouze orientační odhad "
+        "na základě výpočtových formulí (Mifflin–St Jeor, PAL).\n\n"
+        "Pokračujeme nastavením profilu.\n\n"
+        "Krok 1/6: Pohlaví (Muž / Žena):",
+        reply_markup=SEX_KB,
+        parse_mode="Markdown",
+    )
+
+async def handle_profile_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = anonymize_user(update.effective_user.id)
+    text = (update.message.text or "").strip()
+    if text == "Zrušit":
+        context.user_data["mode"] = None
+        context.user_data.pop("profile", None)
+        return await update.message.reply_text(
+            "❌ Nastavení profilu zrušeno.",
+            reply_markup=MAIN_KB
+        )
+    mode = context.user_data.get("mode")
+    profile = context.user_data.get("profile", {})
+
+    # Krok 1/6: sex
+    if mode == "set_profile_1":
+        if text not in ("Muž", "Žena"):
+            return await update.message.reply_text("Prosím zvolte *Muž* nebo *Žena*.", reply_markup=SEX_KB, parse_mode="Markdown")
+        profile["sex"] = text
+        context.user_data["profile"] = profile
+        context.user_data["mode"] = "set_profile_2"
+        return await update.message.reply_text(
+            "Krok 2/6: Věk (Zadejte v letech):",
+            reply_markup=CANCEL_KB
+        )
+
+    # Krok 2/6: age
+    if mode == "set_profile_2":
+        try:
+            age = int(text)
+            if age <= 0 or age > 120:
+                raise ValueError
+        except ValueError:
+            return await update.message.reply_text("Prosím zadejte věk jako číslo (např. 32).")
+        profile["age"] = age
+        context.user_data["profile"] = profile
+        context.user_data["mode"] = "set_profile_3"
+        return await update.message.reply_text(
+            "Krok 3/6: Výška (Zadejte v cm):",
+            reply_markup=CANCEL_KB
+        )
+
+    # Krok 3/6: height
+    if mode == "set_profile_3":
+        try:
+            height = float(text.replace(",", "."))
+            if height <= 50 or height > 250:
+                raise ValueError
+        except ValueError:
+            return await update.message.reply_text("Prosím zadejte výšku v cm jako číslo (např. 168).")
+        profile["height_cm"] = height
+        context.user_data["profile"] = profile
+        context.user_data["mode"] = "set_profile_4"
+        return await update.message.reply_text(
+            "Krok 4/6: Váha (Zadejte v kg):",
+            reply_markup=CANCEL_KB
+        )
+
+    # Krok 4/6: weight
+    if mode == "set_profile_4":
+        try:
+            weight = float(text.replace(",", "."))
+            if weight <= 20 or weight > 400:
+                raise ValueError
+        except ValueError:
+            return await update.message.reply_text("Prosím zadejte váhu v kg jako číslo (např. 70.5).")
+        profile["weight_kg"] = weight
+        context.user_data["profile"] = profile
+        context.user_data["mode"] = "set_profile_5"
+        return await update.message.reply_text(
+            "Krok 5/6: Úroveň fyzické aktivity\n\n"
+            "Vyberte možnost, která se nejvíce blíží Vašemu běžnému životnímu stylu:\n\n"
+            "• Sedavá – převážně sedavá práce, minimum pohybu, žádný nebo téměř žádný sport\n"
+            "• Lehká – lehký pohyb (procházky), občasná fyzická aktivita 1–2× týdně\n"
+            "• Střední – pravidelná fyzická aktivita nebo sport 3–4× týdně\n"
+            "• Vysoká – fyzicky náročná práce nebo intenzivní sport téměř každý den\n\n"
+            "Jedná se o orientační odhad.",
+            reply_markup=ACTIVITY_KB,
+        )
+
+    # Krok 5/6: activity
+    if mode == "set_profile_5":
+        if text not in ("Sedavá", "Lehká", "Střední", "Vysoká"):
+            return await update.message.reply_text("Prosím vyberte aktivitu z tlačítek.", reply_markup=ACTIVITY_KB)
+        profile["activity"] = text
+        context.user_data["profile"] = profile
+        context.user_data["mode"] = "set_profile_6"
+        return await update.message.reply_text(
+            "Krok 6/6: Cíl. Co je Vaše priorita? Hubnout / Udržovat / Nabírat",
+            reply_markup=GOAL_KB,
+        )
+
+    # Krok 6/6: goal + compute + save
+    if mode == "set_profile_6":
+        if text not in ("Hubnout", "Udržovat", "Nabírat"):
+            return await update.message.reply_text("Prosím vyberte cíl z tlačítek.", reply_markup=GOAL_KB)
+
+        profile["goal"] = text
+        context.user_data["profile"] = profile
+
+        # výpočet
+        targets = calculate_targets(
+            sex=profile["sex"],
+            age=profile["age"],
+            height_cm=profile["height_cm"],
+            weight_kg=profile["weight_kg"],
+            activity=profile["activity"],
+            goal=profile["goal"],
+        )
+
+        # uložení do DB
+        upsert_profile(user_id, profile, targets)
+
+        # konec režimu
+        context.user_data["mode"] = None
+
+        return await update.message.reply_text(
+            "✅ Profil nastaven a cíle vypočítány! Zobrazuji výsledek...\n\n"
+            "*Váš osobní plán (Vědecký odhad)*\n"
+            f"Na základě Vašich dat a cíle *{profile['goal'].upper()}* Vám bot doporučuje:\n\n"
+            f"🍽️ Cílové Kalorie: *{targets['calories']} kcal* denně\n"
+            f"💪 Bílkoviny: *{targets['protein_g']} g*\n"
+            f"🧈 Tuky: *{targets['fat_g']} g*\n"
+            f"🍞 Sacharidy: *{targets['carbs_g']} g*\n\n"
+            "Tato čísla jsou uložena jako Vaše denní cíle.",
+            reply_markup=MAIN_KB,
+            parse_mode="Markdown",
+        )
+
 
 async def handle_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = context.user_data.get("mode")
+
+    if mode and mode.startswith("set_profile_"):
+        return await handle_profile_flow(update, context)
+
     if mode == "calories":
         return await handle_calorie_query(update, context)
 
