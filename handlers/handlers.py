@@ -6,7 +6,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from configuration.config import OPENAI_API_KEY
-from database.database import get_db_connection, upsert_profile
+from database.database import get_db_connection, upsert_profile, set_show_targets, get_profile
 from nutrition.nutrition import get_food_info, parse_food_pairs_free, parse_food_pairs_llm, calculate_targets
 from datetime import datetime, timedelta, date
 
@@ -85,6 +85,13 @@ CANCEL_KB = ReplyKeyboardMarkup(
     one_time_keyboard=False,
 )
 
+TARGETS_OPTIN_KB = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton("Ano"), KeyboardButton("Ne")]],
+    resize_keyboard=True,
+    one_time_keyboard=False,
+)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = anonymize_user(update.effective_user.id)
     with get_db_connection() as conn:
@@ -105,6 +112,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parse_mode="Markdown",
         reply_markup=MAIN_KB,
     )
+
+def get_today_kcal_sum(user_id: str) -> float:
+    with get_db_connection() as conn:
+        r = conn.execute(
+            "SELECT COALESCE(SUM(kcal), 0) FROM meals WHERE user_id = ? AND date = CURRENT_DATE",
+            (user_id,),
+        ).fetchone()
+    return float(r[0]) if r else 0.0
 
 async def _save_meal(update: Update, context: ContextTypes.DEFAULT_TYPE, meal_type: str, pairs):
     if not meal_type:
@@ -154,6 +169,19 @@ async def _save_meal(update: Update, context: ContextTypes.DEFAULT_TYPE, meal_ty
         "\n".join(lines),
         parse_mode="Markdown",
     )
+
+    prof = get_profile(user_id)
+    if prof and prof["show_targets"] == 1:
+        target = float(prof["target_calories"])
+        eaten = get_today_kcal_sum(user_id)
+        remaining = target - eaten
+        pct = (eaten / target * 100) if target > 0 else 0
+
+        await update.message.reply_text(
+            f"📌 Dnes: {eaten:.0f} / {target:.0f} kcal ({pct:.0f}%)\n"
+            f"Zbývá: {remaining:.0f} kcal"
+        )
+
 
 async def handle_delete_last_meal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = anonymize_user(update.effective_user.id)
@@ -316,6 +344,20 @@ async def handle_daily_summary(update: Update, context: ContextTypes.DEFAULT_TYP
         total += r["kcal"]
 
     reply_lines.append(f"\n🔥 Celkem: {total:.1f} kcal")
+
+    prof = get_profile(user_id)
+    if prof and prof["show_targets"] == 1:
+        target = float(prof["target_calories"])
+        eaten = get_today_kcal_sum(user_id)
+        remaining = target - eaten
+        pct = (eaten / target * 100) if target > 0 else 0
+
+        reply_lines.append("")
+        reply_lines.append(
+            f"📌 Cíl: {target:.0f} kcal | "
+            f"Snědeno: {eaten:.0f} kcal ({pct:.0f}%) | "
+            f"Zbývá: {remaining:.0f} kcal"
+        )
     await update.message.reply_text("\n".join(reply_lines), parse_mode="Markdown")
 
 async def handle_weekly_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -347,6 +389,10 @@ async def handle_weekly_summary(update: Update, context: ContextTypes.DEFAULT_TY
 
     reply_lines = ["📊 *Týdenní přehled (posledních 7 dní):*"]
 
+    prof = get_profile(user_id)
+    show = prof and prof["show_targets"] == 1
+    target = float(prof["target_calories"]) if show else None
+
     d = start_date
     while d <= today:
         d_str = d.isoformat()
@@ -355,8 +401,23 @@ async def handle_weekly_summary(update: Update, context: ContextTypes.DEFAULT_TY
         day_rows = by_date.get(d_str, [])
         day_total = sum(r["kcal"] for r in day_rows) if day_rows else 0
 
+        day_pct = None
+        day_status = None
+        if show and day_rows and target and target > 0:
+            day_pct = (day_total / target) * 100
+
+            if day_pct < 90:
+                day_status = "Nesplněno ❌"
+            elif day_pct <= 110:
+                day_status = "Splněno ✅"
+            else:
+                day_status = "Překročeno ⚠️"
+
         if day_rows:
-            reply_lines.append(f"\n📅 *{pretty_date}* ({day_total:.1f} kcal)")
+            line = f"\n📅 *{pretty_date}* ({day_total:.1f} kcal)"
+            if day_pct is not None:
+                line += f" | {day_pct:.0f}% | {day_status}"
+            reply_lines.append(line)
         else:
             reply_lines.append(f"\n📅 *{pretty_date}*")
             reply_lines.append("   📭 Nic nebylo zaznamenáno.")
@@ -382,7 +443,6 @@ async def handle_weekly_summary(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
 async def enter_profile_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # GDPR/Disclaimer + старт анкеты
     context.user_data["mode"] = "set_profile_1"
     context.user_data["profile"] = {}
 
@@ -495,7 +555,6 @@ async def handle_profile_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
         profile["goal"] = text
         context.user_data["profile"] = profile
 
-        # výpočet
         targets = calculate_targets(
             sex=profile["sex"],
             age=profile["age"],
@@ -505,13 +564,11 @@ async def handle_profile_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
             goal=profile["goal"],
         )
 
-        # uložení do DB
         upsert_profile(user_id, profile, targets)
 
-        # konec režimu
         context.user_data["mode"] = None
 
-        return await update.message.reply_text(
+        await update.message.reply_text(
             "✅ Profil nastaven a cíle vypočítány! Zobrazuji výsledek...\n\n"
             "*Váš osobní plán (Vědecký odhad)*\n"
             f"Na základě Vašich dat a cíle *{profile['goal'].upper()}* Vám bot doporučuje:\n\n"
@@ -524,9 +581,35 @@ async def handle_profile_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
             parse_mode="Markdown",
         )
 
+        context.user_data["mode"] = "profile_optin"
+
+        return await update.message.reply_text(
+            "Chcete zobrazovat průběh cíle?\n"
+            "(kolik jste snědl(a) a kolik zbývá)",
+            reply_markup=TARGETS_OPTIN_KB
+        )
+
 
 async def handle_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = context.user_data.get("mode")
+
+    if mode == "profile_optin":
+        text = (update.message.text or "").strip()
+        user_id = anonymize_user(update.effective_user.id)
+
+        if text not in ("Ano", "Ne"):
+            return await update.message.reply_text(
+                "Prosím vyberte: Ano / Ne",
+                reply_markup=TARGETS_OPTIN_KB
+            )
+
+        set_show_targets(user_id, enabled=(text == "Ano"))
+        context.user_data["mode"] = None
+
+        return await update.message.reply_text(
+            "✅ Nastavení uloženo.",
+            reply_markup=MAIN_KB
+        )
 
     if mode and mode.startswith("set_profile_"):
         return await handle_profile_flow(update, context)

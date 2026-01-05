@@ -48,6 +48,13 @@ def init_db():
             )
         """)
 
+        try:
+            conn.execute(
+                "ALTER TABLE profiles ADD COLUMN show_targets INTEGER NOT NULL DEFAULT 0"
+            )
+        except Exception:
+            pass
+
         conn.commit()
 
 def upsert_profile(user_id: str, profile: dict, targets: dict) -> None:
@@ -89,3 +96,23 @@ def upsert_profile(user_id: str, profile: dict, targets: dict) -> None:
             ),
         )
         conn.commit()
+
+def set_show_targets(user_id: str, enabled: bool) -> None:
+    with get_db_connection() as conn:
+        conn.execute(
+            "UPDATE profiles SET show_targets = ? WHERE user_id = ?",
+            (1 if enabled else 0, user_id),
+        )
+        conn.commit()
+
+def get_profile(user_id: str):
+    with get_db_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT target_calories, show_targets
+            FROM profiles
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+    return row
