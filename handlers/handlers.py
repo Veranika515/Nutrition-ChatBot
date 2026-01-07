@@ -217,7 +217,7 @@ async def enter_calorie_mode(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(
         "🔢 *Režim výpočtu kalorií*\n"
         "Pište potraviny a gramy(ml,kusy) na řádek, např.:\n✅`vařená rýže 100`✅  \nnebo  \n✅`banán 1 kus vařená rýže 150`✅.\n"
-        "Pro ukončení klepni na „Zpět na hlavní nabídku“.",
+        "Pro ukončení klepněte na „Zpět na hlavní nabídku“.",
         parse_mode="Markdown",
         reply_markup=CALORIES_EXIT_KB,
     )
@@ -279,9 +279,7 @@ async def handle_calorie_query(update, context):
             "Můžete použít přirozenou větu, např.:\n"
             "  ✅`Kolik kalorií má 60 g ovesné kaše a 250 ml kávy?`✅\n\n"
             "nebo jednoduchý formát:\n"
-            "  ✅`vařená rýže 100 pečené kuře 150`✅\n"
-            "  případně s prefixem `kcal`, např.:\n"
-            "  ✅`kcal smažený sýr 100 párek 50`✅",
+            "  ✅`vařená rýže 100 pečené kuře 150`✅",
             parse_mode="Markdown"
         )
         return
@@ -384,7 +382,7 @@ async def handle_weekly_summary(update: Update, context: ContextTypes.DEFAULT_TY
 
     by_date = {}
     for r in rows:
-        d_str = r["date"]      # očekává se formát 'YYYY-MM-DD'
+        d_str = r["date"]
         by_date.setdefault(d_str, []).append(r)
 
     reply_lines = ["📊 *Týdenní přehled (posledních 7 dní):*"]
@@ -469,7 +467,6 @@ async def handle_profile_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
     mode = context.user_data.get("mode")
     profile = context.user_data.get("profile", {})
 
-    # Krok 1/6: sex
     if mode == "set_profile_1":
         if text not in ("Muž", "Žena"):
             return await update.message.reply_text("Prosím zvolte *Muž* nebo *Žena*.", reply_markup=SEX_KB, parse_mode="Markdown")
@@ -481,7 +478,6 @@ async def handle_profile_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=CANCEL_KB
         )
 
-    # Krok 2/6: age
     if mode == "set_profile_2":
         try:
             age = int(text)
@@ -497,7 +493,6 @@ async def handle_profile_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=CANCEL_KB
         )
 
-    # Krok 3/6: height
     if mode == "set_profile_3":
         try:
             height = float(text.replace(",", "."))
@@ -513,7 +508,6 @@ async def handle_profile_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=CANCEL_KB
         )
 
-    # Krok 4/6: weight
     if mode == "set_profile_4":
         try:
             weight = float(text.replace(",", "."))
@@ -535,7 +529,6 @@ async def handle_profile_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=ACTIVITY_KB,
         )
 
-    # Krok 5/6: activity
     if mode == "set_profile_5":
         if text not in ("Sedavá", "Lehká", "Střední", "Vysoká"):
             return await update.message.reply_text("Prosím vyberte aktivitu z tlačítek.", reply_markup=ACTIVITY_KB)
@@ -547,7 +540,6 @@ async def handle_profile_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=GOAL_KB,
         )
 
-    # Krok 6/6: goal + compute + save
     if mode == "set_profile_6":
         if text not in ("Hubnout", "Udržovat", "Nabírat"):
             return await update.message.reply_text("Prosím vyberte cíl z tlačítek.", reply_markup=GOAL_KB)

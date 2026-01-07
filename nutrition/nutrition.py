@@ -187,7 +187,6 @@ def parse_food_pairs_llm(text: str) -> List[Tuple[str, int]]:
         return []
 
 def calculate_targets(sex: str, age: int, height_cm: float, weight_kg: float, activity: str, goal: str) -> dict:
-    # PAL koeficienty (jednoduché mapování podle scénáře)
     pal_map = {
         "Sedavá": 1.2,
         "Lehká": 1.375,
@@ -196,7 +195,6 @@ def calculate_targets(sex: str, age: int, height_cm: float, weight_kg: float, ac
     }
     pal = pal_map.get(activity, 1.2)
 
-    # Mifflin–St Jeor (BMR)
     if sex == "Muž":
         bmr = 10 * weight_kg + 6.25 * height_cm - 5 * age + 5
     else:
@@ -204,7 +202,6 @@ def calculate_targets(sex: str, age: int, height_cm: float, weight_kg: float, ac
 
     tdee = bmr * pal
 
-    # Cíl (podle scénáře: ±500 kcal)
     if goal == "Hubnout":
         calories = tdee - 500
     elif goal == "Nabírat":
@@ -214,14 +211,10 @@ def calculate_targets(sex: str, age: int, height_cm: float, weight_kg: float, ac
 
     calories = int(round(calories))
 
-    # Makra podle scénáře:
-    # protein: 2 g / kg
     protein_g = int(round(2.0 * weight_kg))
 
-    # fat: 25% z energie
     fat_g = int(round((calories * 0.25) / 9))
 
-    # carbs: zbytek energie
     carbs_kcal = calories - (protein_g * 4) - (fat_g * 9)
     carbs_g = int(round(carbs_kcal / 4))
 

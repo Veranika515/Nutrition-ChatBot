@@ -45,14 +45,9 @@ def main():
         exit_to_main_menu
     ))
 
-    app.add_handler(MessageHandler(
-        filters.TEXT & filters.Regex(r"^(kcal|kalorie)\b"),
-        handle_calorie_query
-    ))
-
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_chat))
 
-    print("🤖 NutriBot is running (long polling)…")
+    print("NutriBot is running (long polling)…")
     app.run_polling()
 
 if __name__ == "__main__":
