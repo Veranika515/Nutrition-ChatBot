@@ -1,11 +1,11 @@
 import time
 import json
-
 import requests
 import re
+
 from typing import List, Tuple
 from openai import OpenAI
-from configuration.config import OPENAI_API_KEY, CALORIE_NINJAS_KEY
+from configuration.config import OPENAI_API_KEY, NUTRITION_API_KEY
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -15,7 +15,7 @@ def translate_to_english(food_name: str) -> str:
     system_prompt = (
         "Jsi odborník na přesné překlady potravin pro kalorické databáze. "
         "Tvým cílem je, aby byl překlad co nejvíce **KALORICKY SPECIFICKÝ**.\n"
-        "**NIKDY NESMÍŠ OMITNOUT ZPŮSOB PŘÍPRAVY (např. 'smažený', 'pečený', 'vařený').**\n"
+        "Nikdy nesmíš omitnout způsob přípravy (např. 'smažený', 'pečený', 'vařený').\n"
         "Pokud je způsob přípravy uveden, musí být přeložen.\n"
         "Příklady:\n"
         "• Vstup: 'Smažený eidam' → Výstup: 'Fried Edam cheese'\n"
@@ -75,13 +75,13 @@ def get_food_info(food_name: str, grams: int):
     query = f"{food_name_en} {int(round(grams))}g"
 
     url = "https://api.calorieninjas.com/v1/nutrition"
-    headers = {"X-Api-Key": CALORIE_NINJAS_KEY}
+    headers = {"X-Api-Key": NUTRITION_API_KEY}
 
     for attempt in range(3):
         try:
             resp = requests.get(url, headers=headers, params={"query": query}, timeout=12)
         except requests.RequestException as e:
-            print("❌ CalorieNinjas network error:", e)
+            print("❌ Nutrition API network error:", e)
             return None
 
         if 200 <= resp.status_code < 300:
@@ -93,7 +93,7 @@ def get_food_info(food_name: str, grams: int):
 
             items = data.get("items") or []
             if not items:
-                print("⚠️ Not found in CalorieNinjas:", query)
+                print("⚠️ Not found in Nutrition API:", query)
                 return None
             f = items[0]
 
@@ -120,15 +120,15 @@ def get_food_info(food_name: str, grams: int):
             }
 
         if resp.status_code in (401, 403):
-            print("❌ CalorieNinjas auth error:", resp.text[:200])
+            print("❌ Nutrition auth error:", resp.text[:200])
             return None
 
         if 500 <= resp.status_code < 600:
-            print(f"❌ CalorieNinjas API error {resp.status_code}: {resp.text[:200]}")
+            print(f"❌ Nutrition API error {resp.status_code}: {resp.text[:200]}")
             time.sleep(0.5 * (2 ** attempt))  # 0.5s, 1s
             continue
 
-        print(f"❌ CalorieNinjas API error {resp.status_code}: {resp.text[:200]}")
+        print(f"❌ Nutrition API error {resp.status_code}: {resp.text[:200]}")
         return None
     return None
 
@@ -187,7 +187,6 @@ def parse_food_pairs_llm(text: str) -> List[Tuple[str, int]]:
         return []
 
 def calculate_targets(sex: str, age: int, height_cm: float, weight_kg: float, activity: str, goal: str) -> dict:
-    # PAL koeficienty (jednoduché mapování podle scénáře)
     pal_map = {
         "Sedavá": 1.2,
         "Lehká": 1.375,
@@ -196,7 +195,6 @@ def calculate_targets(sex: str, age: int, height_cm: float, weight_kg: float, ac
     }
     pal = pal_map.get(activity, 1.2)
 
-    # Mifflin–St Jeor (BMR)
     if sex == "Muž":
         bmr = 10 * weight_kg + 6.25 * height_cm - 5 * age + 5
     else:
@@ -204,7 +202,6 @@ def calculate_targets(sex: str, age: int, height_cm: float, weight_kg: float, ac
 
     tdee = bmr * pal
 
-    # Cíl (podle scénáře: ±500 kcal)
     if goal == "Hubnout":
         calories = tdee - 500
     elif goal == "Nabírat":
@@ -214,14 +211,10 @@ def calculate_targets(sex: str, age: int, height_cm: float, weight_kg: float, ac
 
     calories = int(round(calories))
 
-    # Makra podle scénáře:
-    # protein: 2 g / kg
     protein_g = int(round(2.0 * weight_kg))
 
-    # fat: 25% z energie
     fat_g = int(round((calories * 0.25) / 9))
 
-    # carbs: zbytek energie
     carbs_kcal = calories - (protein_g * 4) - (fat_g * 9)
     carbs_g = int(round(carbs_kcal / 4))
 
