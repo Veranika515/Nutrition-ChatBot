@@ -174,12 +174,16 @@ async def _save_meal(update: Update, context: ContextTypes.DEFAULT_TYPE, meal_ty
     if prof and prof["show_targets"] == 1:
         target = float(prof["target_calories"])
         eaten = get_today_kcal_sum(user_id)
-        remaining = target - eaten
         pct = (eaten / target * 100) if target > 0 else 0
+
+        if eaten <= target:
+            balance_text = f"Zbývá: {target - eaten:.0f} kcal"
+        else:
+            balance_text = f"⚠️ Nad limit o: {eaten - target:.0f} kcal"
 
         await update.message.reply_text(
             f"📌 Dnes: {eaten:.0f} / {target:.0f} kcal ({pct:.0f}%)\n"
-            f"Zbývá: {remaining:.0f} kcal"
+            f"{balance_text}",
         )
 
 
@@ -317,11 +321,18 @@ async def handle_daily_summary(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = anonymize_user(update.effective_user.id)
     with get_db_connection() as conn:
         rows = conn.execute("""
-            SELECT meal_type, food, grams, kcal
-            FROM meals
-            WHERE user_id = ? AND date = CURRENT_DATE
-            ORDER BY meal_type
-        """, (user_id,)).fetchall()
+                    SELECT meal_type, food, grams, kcal
+                    FROM meals
+                    WHERE user_id = ? AND date = CURRENT_DATE
+                    ORDER BY 
+                        CASE meal_type
+                            WHEN 'snídaně' THEN 1
+                            WHEN 'svačina' THEN 2
+                            WHEN 'oběd' THEN 3
+                            WHEN 'večeře' THEN 4
+                            ELSE 5
+                        END
+                """, (user_id,)).fetchall()
 
     if not rows:
         await update.message.reply_text("📭 Zatím jste dnes nic nezadal.")
@@ -347,15 +358,19 @@ async def handle_daily_summary(update: Update, context: ContextTypes.DEFAULT_TYP
     if prof and prof["show_targets"] == 1:
         target = float(prof["target_calories"])
         eaten = get_today_kcal_sum(user_id)
-        remaining = target - eaten
         pct = (eaten / target * 100) if target > 0 else 0
+
+        if eaten <= target:
+            balance_text = f"Zbývá: {target - eaten:.0f} kcal"
+        else:
+            balance_text = f"⚠️ Nad limit o: {eaten - target:.0f} kcal"
 
         reply_lines.append("")
         reply_lines.append(
             f"📌 Cíl: {target:.0f} kcal | "
             f"Snědeno: {eaten:.0f} kcal ({pct:.0f}%) | "
-            f"Zbývá: {remaining:.0f} kcal"
         )
+        reply_lines.append(balance_text)
     await update.message.reply_text("\n".join(reply_lines), parse_mode="Markdown")
 
 async def handle_weekly_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -368,9 +383,15 @@ async def handle_weekly_summary(update: Update, context: ContextTypes.DEFAULT_TY
         rows = conn.execute("""
             SELECT date, meal_type, food, grams, kcal
             FROM meals
-            WHERE user_id = ?
-              AND date BETWEEN ? AND ?
-            ORDER BY date, meal_type
+            WHERE user_id = ? AND date BETWEEN ? AND ?
+            ORDER BY date, 
+                CASE meal_type
+                    WHEN 'snídaně' THEN 1
+                    WHEN 'svačina' THEN 2
+                    WHEN 'oběd' THEN 3
+                    WHEN 'večeře' THEN 4
+                    ELSE 5
+                END
         """, (user_id, start_date.isoformat(), today.isoformat())).fetchall()
 
     if not rows:

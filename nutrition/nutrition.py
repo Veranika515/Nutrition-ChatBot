@@ -14,7 +14,9 @@ _NUM_RE = re.compile(r"^(\d+(?:[.,]\d+)?)(?:\s*(?:g|gram|grams|gramů|gramy)?)$"
 def translate_to_english(food_name: str) -> str:
     system_prompt = (
         "Jsi odborník na přesné překlady potravin pro kalorické databáze. "
-        "Tvým cílem je, aby byl překlad co nejvíce **KALORICKY SPECIFICKÝ**.\n"
+        "Tvým cílem je převést český název na standardní anglický kulinářský termín.\n"
+        "Upřednostňuj běžně používané anglické názvy pokrmů před doslovným překladem"
+        "(např. 'Ovesná kaše' -> 'Oatmeal', nikoliv 'Oatmeal porridge').\n"
         "Nikdy nesmíš omitnout způsob přípravy (např. 'smažený', 'pečený', 'vařený').\n"
         "Pokud je způsob přípravy uveden, musí být přeložen.\n"
         "Příklady:\n"
@@ -139,9 +141,11 @@ def parse_food_pairs_llm(text: str) -> List[Tuple[str, int]]:
 
         Pravidla:
         1. Vracej POUZE JSON pole objektů: [{"food": "...", "grams": ...}, ...]
-        2. Hodnota "food" musí být maximálně přesná a **VŽDY ZAHRNUJE** způsob přípravy (např. 'smažený', 'pečený') nebo část produktu (např. 'kuřecí prsa'), aby nedošlo k chybě v kaloriích.
+        2. Hodnota "food" musí být maximálně přesná a **VŽDY ZAHRNUJE** způsob přípravy (např. 'smažený', 'pečený') 
+           nebo část produktu (např. 'kuřecí prsa'), aby nedošlo k chybě v kaloriích.
         3. Pokud je množství uvedeno v ml, převeď 1 ml = 1 g.
-        4. Pokud je množství uvedeno v kusech (např. "3 vejce", "2 banány"), odhadni běžnou hmotnost v gramech pro daný počet kusů a vrať výsledek v gramech.
+        4. Pokud je množství uvedeno v kusech (např. "3 vejce", "2 banány"), 
+           odhadni běžnou hmotnost v gramech pro daný počet kusů a vrať výsledek v gramech.
         5. Pokud je jídlo složené (např. sendvič), extrahuj jednotlivé potraviny, které mají uvedené množství.
         6. Nepřidávej žádný text okolo, žádné vysvětlení.
 
