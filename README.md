@@ -1,0 +1,1 @@
+This project is a Telegram bot developed for a Bachelor's thesis that simplifies nutritional tracking using AI. It uses OpenAI to understand natural language meal entries and the CalorieNinjas API to calculate calories and macronutrients. The bot allows users to set personalized health goals, log meals through simple text, and view daily or weekly summaries of their progress.
