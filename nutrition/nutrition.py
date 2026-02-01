@@ -40,9 +40,10 @@ def _to_int_grams(tok: str) -> int | None:
     m = _NUM_RE.match(tok)
     if not m:
         return None
-    num = m.group(1).replace(",", ".")
+    num_str = m.group(1).replace(",", ".")
     try:
-        return int(round(float(num)))
+        num = float(num_str)
+        return int(num + 0.5) if num > 0 else int(num - 0.5)
     except ValueError:
         return None
 
